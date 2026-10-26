@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Результаты экспериментов: воспроизводимы из manifest.json, не коммитим
+results/
+*.npz
+*.csv
+!docs/**/*.csv
+
+# Графики: генерируются заново
+*.png
+!docs/**/*.png
+
+# Служебное
+.DS_Store
+Thumbs.db

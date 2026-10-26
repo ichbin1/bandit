@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bandit-metacycle"
+version = "0.4.0"
+description = "Многорукие бандиты и метацикл обучения: воспроизводимые эксперименты"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["numpy>=2.0"]
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.9"]
+stats = ["scipy>=1.11"]
+dev = ["pytest>=8.0", "matplotlib>=3.9"]
+
+[project.scripts]
+bandit = "bandit.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bandit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "slow: долгие прогоны (golden-тесты на 3000 шагов)",
+]
