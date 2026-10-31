@@ -7,6 +7,7 @@
 ``show``   — пересчитать сводку по сохранённому каталогу;
 ``stats``  — парные сравнения по ``runs.csv`` (bootstrap/Wilcoxon/знаки + Холм);
 ``report`` — сводный отчёт: таблицы, сравнения, вердикты H1–H6 (``report.md``);
+``ui``     — веб-интерфейс: конструктор прогонов в браузере (``bandit.web``);
 ``demo``   — быстрая демонстрация (``--suite demo``) с графиками.
 
 Примеры
@@ -14,9 +15,11 @@
     python -m bandit.cli list
     python -m bandit.cli run --suite pyramid-ablation --runs 30 --jobs 4
     python -m bandit.cli run --config pyramid-ucb1-none --config pyramid-ucb1-full_cycle
+    python -m bandit.cli run --config-file results/ui-.../configs.json
     python -m bandit.cli show results/20260101-120000
     python -m bandit.cli stats results/20260101-120000/runs.csv --method wilcoxon
     python -m bandit.cli report results/20260101-120000
+    python -m bandit.cli ui --port 8000
 """
 from __future__ import annotations
 
@@ -35,7 +38,7 @@ from . import stats as st
 from .configs import AGENTS, POLICIES, REGISTRY, SUITES, resolve
 from .metrics import METRIC_DESCRIPTIONS
 from .report import build_report, write_report
-from .runner import RECORD_FIELDS, RunRecords, run_config
+from .runner import RECORD_FIELDS, RunConfig, RunRecords, run_config
 
 TABLE_METRICS = (
     "final_points",
@@ -252,11 +255,70 @@ def _summary_rows(summaries: Dict[str, Dict[str, np.ndarray]]) -> List[Dict[str,
     return rows
 
 
+def _error_text(exc: BaseException) -> str:
+    """Текст ошибки для консоли: у ``KeyError`` полезное сообщение лежит в ``args[0]``."""
+    if isinstance(exc, KeyError) and exc.args:
+        return str(exc.args[0])
+    return str(exc)
+
+
+def load_config_file(path: Path | str) -> List[RunConfig]:
+    """Прочитать конфиги из JSON: ``[RunConfig, ...]`` или ``{"configs": [...]}``.
+
+    Такой файл пишет веб-интерфейс (``results/<id>/configs.json``), поэтому
+    прогон из браузера полностью воспроизводится командой из ``manifest.json``.
+    """
+    path = Path(path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"Не удалось прочитать {path}: {exc}") from exc
+    if isinstance(payload, Mapping):
+        payload = payload.get("configs") or []
+    if not isinstance(payload, list) or not payload:
+        raise ValueError(
+            f"{path}: ожидался непустой список конфигов или {{'configs': [...]}}"
+        )
+    return [RunConfig.from_dict(item) for item in payload]
+
+
+def _run_configs(args: argparse.Namespace) -> List[RunConfig]:
+    """Собрать конфиги прогона: ``--suite``/``--config`` плюс ``--config-file``.
+
+    Конфиги из файла регистрируются в ``configs.REGISTRY`` — так же, как это
+    делает ``scripts/advantage_sweep.py``. Дальше ``cmd_run`` и отчёт работают
+    с именами, а полное описание всё равно попадает в манифест.
+    """
+    configs: List[RunConfig] = []
+    if args.suite or args.config:
+        configs.extend(resolve(args.config, args.suite))
+    config_file = getattr(args, "config_file", None)
+    if config_file:
+        for config in load_config_file(config_file):
+            existing = REGISTRY.get(config.name)
+            if existing is not None and existing.to_dict() != config.to_dict():
+                raise KeyError(
+                    f"Конфиг {config.name!r} уже зарегистрирован с другими параметрами"
+                )
+            REGISTRY[config.name] = config
+            configs.append(config)
+    if not configs:
+        raise ValueError("Укажите --config, --suite и/или --config-file")
+    unique: List[RunConfig] = []
+    seen = set()
+    for config in configs:
+        if config.name in seen:
+            continue
+        seen.add(config.name)
+        unique.append(config)
+    return unique
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     try:
-        configs = resolve(args.config, args.suite)
-    except (KeyError, ValueError) as exc:
-        print(f"Ошибка: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+        configs = _run_configs(args)
+    except (KeyError, TypeError, ValueError) as exc:
+        print(f"Ошибка: {_error_text(exc)}", file=sys.stderr)
         return 2
     out_dir = Path(args.out) if args.out else Path("results") / f"{_timestamp()}-{args.suite or 'custom'}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -296,6 +358,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         "base_seed": int(args.seed),
         "jobs": int(args.jobs),
         "suite": args.suite,
+        "config_file": (
+            str(args.config_file) if getattr(args, "config_file", None) else None
+        ),
         "n_steps_override": args.steps,
         "configs": [config.to_dict() for config in configs],
         "record_fields": list(RECORD_FIELDS),
@@ -458,6 +523,25 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ui(args: argparse.Namespace) -> int:
+    """Запустить веб-интерфейс (``bandit.web``): конструктор прогонов в браузере."""
+    try:
+        from .web.app import serve
+    except ImportError as exc:  # pragma: no cover - зависит от окружения
+        print(
+            "Веб-интерфейс требует fastapi и uvicorn: pip install -e .[ui] "
+            f"(не найдено: {getattr(exc, 'name', exc)})",
+            file=sys.stderr,
+        )
+        return 2
+    return serve(
+        host=args.host,
+        port=args.port,
+        open_browser=args.browser,
+        reload=args.reload,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m bandit.cli",
@@ -472,6 +556,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="прогнать конфиги и сохранить результаты")
     p_run.add_argument("--config", action="append", metavar="NAME", help="имя конфига (можно несколько раз)")
+    p_run.add_argument("--config-file", type=Path, default=None, metavar="PATH",
+                       help="JSON со списком конфигов (RunConfig) — так запускает веб-интерфейс")
     p_run.add_argument("--suite", choices=sorted(SUITES), help="набор конфигов")
     p_run.add_argument("--runs", type=int, default=20, help="число прогонов на конфиг (по умолчанию 20)")
     p_run.add_argument("--seed", type=int, default=42, help="базовый сид (по умолчанию 42)")
@@ -495,6 +581,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_demo.add_argument("--out", type=Path, default=Path("results") / "demo")
     p_demo.add_argument("--quiet", action="store_true")
     p_demo.set_defaults(func=cmd_demo)
+
+    p_ui = sub.add_parser("ui", help="веб-интерфейс: конструктор прогонов в браузере")
+    p_ui.add_argument("--host", default="127.0.0.1",
+                      help="адрес (по умолчанию только локальный: 127.0.0.1)")
+    p_ui.add_argument("--port", type=int, default=8000, help="порт (по умолчанию 8000)")
+    p_ui.add_argument("--no-browser", dest="browser", action="store_false",
+                      help="не открывать браузер автоматически")
+    p_ui.add_argument("--reload", action="store_true",
+                      help="автоперезагрузка кода (только для разработки)")
+    p_ui.set_defaults(func=cmd_ui, browser=True)
 
     p_stats = sub.add_parser("stats", help="парные сравнения по runs.csv")
     p_stats.add_argument(

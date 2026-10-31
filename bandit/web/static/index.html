@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>bandit — конструктор экспериментов</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">b</span>
+    <div>
+      <h1>bandit</h1>
+      <p id="version">конструктор экспериментов</p>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="builder">Конструктор</button>
+    <button class="tab" data-tab="results">Результаты</button>
+  </nav>
+  <div class="top-actions">
+    <button id="btn-save" class="ghost" title="Скачать конфигурацию в JSON">Сохранить</button>
+    <label class="ghost file">Загрузить<input id="file-load" type="file" accept="application/json" hidden></label>
+  </div>
+</header>
+
+<main>
+  <section id="tab-builder" class="tab-panel">
+    <div class="grid">
+      <div class="column">
+        <section class="card">
+          <h2>Среда</h2>
+          <label class="row"><span>Тип</span><select id="env-kind"></select></label>
+          <p id="env-note" class="hint"></p>
+          <label class="row"><span>Пресет</span><select id="env-preset"></select></label>
+          <div id="env-fields" class="fields"></div>
+          <details class="advanced">
+            <summary>Дополнительные параметры</summary>
+            <div id="env-advanced" class="fields"></div>
+          </details>
+          <p id="env-ignored" class="hint"></p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Агенты <span class="badge" id="agents-count">0</span></h2>
+            <button id="btn-agents-all" class="ghost small">Все</button>
+          </div>
+          <div id="agent-list" class="list"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Мета-политики <span class="badge" id="policies-count">0</span></h2>
+            <button id="btn-policies-reset" class="ghost small">Базовые</button>
+          </div>
+          <div id="policy-list" class="list"></div>
+        </section>
+
+        <section class="card">
+          <h2>Параметры прогона</h2>
+          <div class="fields">
+            <label><span>Название</span><input id="exp-title" type="text" placeholder="например, H1-ucb1-parity"></label>
+            <label><span>Прогонов на конфиг</span><input id="exp-runs" type="number" min="1" max="1000" step="1"></label>
+            <label><span>Шагов на прогон</span><input id="exp-steps" type="number" min="16" max="200000" step="100"></label>
+            <label><span>Сид</span><input id="exp-seed" type="number" min="0" step="1"></label>
+            <label><span>Процессов (--jobs)</span><input id="exp-jobs" type="number" min="1" max="16" step="1"></label>
+          </div>
+          <div class="checks">
+            <label class="check"><input id="exp-plots" type="checkbox"> строить графики</label>
+            <label class="check"><input id="exp-oracle" type="checkbox"> добавить оракула</label>
+          </div>
+        </section>
+      </div>
+
+      <div class="column">
+        <section class="card">
+          <h2>Сводка</h2>
+          <dl id="summary" class="summary"></dl>
+          <div class="buttons">
+            <button id="btn-validate" class="ghost">Проверить</button>
+            <button id="btn-run" class="primary">Запустить</button>
+            <button id="btn-cancel" class="danger" disabled>Остановить</button>
+          </div>
+          <div id="messages" class="messages"></div>
+          <div id="progress" class="progress" hidden>
+            <div class="bar"><span id="progress-fill"></span></div>
+            <p id="progress-text" class="hint"></p>
+          </div>
+        </section>
+
+        <section class="card" id="job-card" hidden>
+          <div class="card-head">
+            <h2>Задание <span id="job-state" class="chip">queued</span></h2>
+            <span id="job-id" class="hint"></span>
+          </div>
+          <pre id="job-log" class="log"></pre>
+        </section>
+
+        <section class="card" id="metrics-card" hidden>
+          <h2>Метрики <span id="metrics-run" class="hint"></span></h2>
+          <div id="metrics-table" class="table-wrap"></div>
+          <div id="plots" class="plots"></div>
+          <details id="hypotheses-box" hidden>
+            <summary>Вердикты гипотез</summary>
+            <div id="hypotheses" class="hypotheses"></div>
+          </details>
+          <p id="metrics-hint" class="hint"></p>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-results" class="tab-panel" hidden>
+    <div class="grid">
+      <div class="column">
+        <section class="card">
+          <div class="card-head">
+            <h2>Сохранённые прогоны</h2>
+            <button id="btn-refresh-runs" class="ghost small">Обновить</button>
+          </div>
+          <p class="hint">Каталог <code id="results-dir">results/</code>: читается из манифестов, поэтому список живёт после перезапуска сервера.</p>
+          <div id="runs-list" class="list"></div>
+        </section>
+      </div>
+      <div class="column">
+        <section class="card" id="run-detail-card" hidden>
+          <h2>Прогон <span id="run-title" class="hint"></span></h2>
+          <dl id="run-summary" class="summary"></dl>
+          <div class="buttons">
+            <button id="btn-report" class="ghost">Построить отчёт</button>
+            <a id="link-report" class="ghost disabled" href="#" target="_blank" rel="noopener">report.md</a>
+          </div>
+          <div id="run-metrics" class="table-wrap"></div>
+          <div id="run-plots" class="plots"></div>
+          <details id="run-hypotheses-box" hidden>
+            <summary>Вердикты гипотез</summary>
+            <div id="run-hypotheses" class="hypotheses"></div>
+          </details>
+        </section>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

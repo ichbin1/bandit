@@ -10,9 +10,10 @@
 ## Быстрый старт
 
 ```powershell
-pip install -r requirements.txt          # numpy, matplotlib, pytest
+pip install -r requirements.txt          # numpy, matplotlib, pytest, fastapi, uvicorn
 python -m bandit.cli list                # что есть: среды, агенты, политики, наборы
 python -m bandit.cli demo                # 7 конфигов × 5 прогонов × 1500 шагов + графики
+python -m bandit.cli ui                  # веб-конструктор: http://127.0.0.1:8000/
 python -m bandit.cli run --suite pyramid-ablation --runs 30 --jobs 4
 python -m bandit.cli run --suite pyramid-learned --runs 30 --jobs 4
 python -m bandit.cli run --suite pyramid-hypotheses --runs 30 --jobs 4
@@ -36,6 +37,39 @@ pytest                                   # тесты, включая golden-т�
 | `report.md`, `report.json` | сводный отчёт и вердикты H1–H6 (`bandit.cli report`) |
 | `dashboard.png` | 2×2: очки, сожаление по рукам, частота лучшей руки, эпохи |
 
+## Веб-интерфейс
+
+`bandit.web` — локальный конструктор экспериментов: среда, агенты, мета-политики,
+число прогонов и шагов, запуск и просмотр метрик без правки Python-кода.
+
+```powershell
+pip install -e .[ui]        # fastapi + uvicorn (или pip install -r requirements.txt)
+python -m bandit.cli ui     # http://127.0.0.1:8000/ — браузер открывается сам
+python -m bandit.web --port 8100 --no-browser
+```
+
+Что внутри:
+
+* **Конструктор** — пресеты среды (`layered` / `pyramid` / `bernoulli` / `gaussian`)
+  плюс режимы H6, карточки агентов и политик с их реальными параметрами,
+  поля «прогонов / шагов / сид / jobs», автоматический оракул для КПД.
+* **Сводка** — сколько конфигов и эпизодов получится и сколько это займёт
+  (оценка по замеру ≈5 тыс. шагов/с на процесс); кнопки «Проверить»
+  (прогон по 32 шага) и «Запустить».
+* **Задание** — прогресс, потоковый лог и отмена. UI запускает
+  `python -m bandit.cli run --config-file results/<id>/configs.json`, поэтому
+  «Остановить» завершает реальный процесс, а прогон воспроизводим из терминала.
+* **Результаты** — таблица метрик (mean ± SEM), графики, вердикты H1–H6 и
+  `report.md` по кнопке. Список прогонов читается из `results/*/manifest.json`
+  и переживает перезапуск сервера.
+* **Сохранение** — конфигурация живёт в `localStorage` и скачивается в JSON;
+  сервер кладёт такую же спецификацию в `results/<id>/spec.json`.
+
+Сборка конфигов вынесена в чистую функцию `bandit/web/schema.py`
+(`spec → List[RunConfig]`), а FastAPI в `bandit/web/app.py` — только транспорт:
+ту же сборку можно звать из скриптов и тестов. Маршруты API, модель задания и
+воспроизведение — в `docs/UI.md`.
+
 ## Структура
 
 ```
@@ -51,8 +85,10 @@ bandit/
 │   ├── report.py    # отчёт: таблицы, парные сравнения, вердикты H1–H6
 │   ├── plots.py     # дашборд, бары итогов (бэкенд Agg)
 │   ├── configs.py   # реестр конфигов и наборы (--suite)
-│   └── cli.py       # list / run / show / stats / report / demo
+│   ├── web/         # UI: schema (spec → RunConfig), jobs (subprocess), app (FastAPI), static
+│   └── cli.py       # list / run / show / stats / report / demo / ui
 ├── docs/HYPOTHESIS.md
+├── docs/UI.md       # веб-интерфейс: маршруты API, задания, отмена, воспроизведение
 ├── scripts/check_parity.py   # сверка с кодом версии 0.1 (golden-числа)
 ├── scripts/advantage_sweep.py  # стадии S0/S1/S2/S6: оси, абляция, длинный горизонт
 ├── scripts/advantage_report.py # advantage.md: Δ, бюджет ветвей, t*, вердикты M1–M7

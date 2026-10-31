@@ -283,8 +283,135 @@ def test_report_command_writes_markdown_and_json(tmp_path, capsys):
     assert "Нет runs.csv" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("command", ["list", "run", "show", "stats", "report", "demo"])
+@pytest.mark.parametrize("command", ["list", "run", "show", "stats", "report", "demo", "ui"])
 def test_parser_has_all_commands(command):
     parser = cli.build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args([command, "--help"])
+
+
+def _config_payload(name: str = "ui-test-ucb1-none", **overrides):
+    payload = {
+        "name": name,
+        "env": {"kind": "layered", "params": {"n_levels": 1, "max_arms": 5}},
+        "agent": {"kind": "ucb1", "params": {"c": 2.0}},
+        "policy": {"kind": "none", "params": {}},
+        "n_steps": 50,
+        "description": "конфиг из веб-интерфейса",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _restore_registry(snapshot):
+    from bandit.configs import REGISTRY
+
+    REGISTRY.clear()
+    REGISTRY.update(snapshot)
+
+
+def test_run_accepts_config_file(tmp_path):
+    """Веб-интерфейс запускает прогон через ``run --config-file``."""
+    from bandit.configs import REGISTRY
+
+    snapshot = dict(REGISTRY)
+    path = tmp_path / "configs.json"
+    path.write_text(
+        json.dumps([_config_payload()], ensure_ascii=False), encoding="utf-8"
+    )
+    out = tmp_path / "out"
+    try:
+        code = cli.main(
+            [
+                "run",
+                "--config-file",
+                str(path),
+                "--runs",
+                "1",
+                "--steps",
+                "30",
+                "--out",
+                str(out),
+                "--no-plots",
+                "--quiet",
+            ]
+        )
+        assert code == 0
+        assert (out / "ui-test-ucb1-none.npz").is_file()
+        manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["config_file"] == str(path)
+        assert manifest["suite"] is None
+        assert manifest["n_steps_override"] == 30
+        assert [item["name"] for item in manifest["configs"]] == ["ui-test-ucb1-none"]
+        assert manifest["configs"][0]["env"]["params"]["n_levels"] == 1
+    finally:
+        _restore_registry(snapshot)
+
+
+def test_load_config_file_accepts_wrapped_list(tmp_path):
+    path = tmp_path / "configs.json"
+    path.write_text(
+        json.dumps({"configs": [_config_payload("ui-a"), _config_payload("ui-b")]}),
+        encoding="utf-8",
+    )
+    configs = cli.load_config_file(path)
+    assert [config.name for config in configs] == ["ui-a", "ui-b"]
+    assert configs[0].n_steps == 50
+
+
+def test_config_file_errors_are_reported(tmp_path, capsys):
+    missing = tmp_path / "nope.json"
+    assert cli.main(["run", "--config-file", str(missing)]) == 2
+    assert "Не удалось прочитать" in capsys.readouterr().err
+
+    empty = tmp_path / "empty.json"
+    empty.write_text("[]", encoding="utf-8")
+    assert cli.main(["run", "--config-file", str(empty)]) == 2
+    assert "непустой список" in capsys.readouterr().err
+
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps([{"env": {"kind": "layered"}}]), encoding="utf-8")
+    assert cli.main(["run", "--config-file", str(broken)]) == 2
+    assert "Ошибка" in capsys.readouterr().err
+
+
+def test_config_file_conflict_with_registry_is_reported(tmp_path, capsys):
+    from bandit.configs import REGISTRY
+
+    path = tmp_path / "conflict.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "pyramid-ucb1-none",
+                    "env": {"kind": "layered", "params": {"n_levels": 1}},
+                    "agent": {"kind": "ucb1", "params": {"c": 9.0}},
+                    "policy": {"kind": "none", "params": {}},
+                    "n_steps": 10,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    snapshot = dict(REGISTRY)
+    try:
+        assert cli.main(["run", "--config-file", str(path), "--runs", "1"]) == 2
+        assert "уже зарегистрирован" in capsys.readouterr().err
+    finally:
+        _restore_registry(snapshot)
+
+
+def test_ui_command_arguments():
+    parser = cli.build_parser()
+    args = parser.parse_args(["ui", "--port", "8123", "--no-browser"])
+    assert args.func is cli.cmd_ui
+    assert args.port == 8123
+    assert args.browser is False
+    assert args.host == "127.0.0.1"
+
+    defaults = parser.parse_args(["ui"])
+    assert defaults.port == 8000
+    assert defaults.browser is True
+    assert defaults.reload is False
+
+
